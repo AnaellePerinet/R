@@ -1,0 +1,349 @@
+---
+title: 'Projet tutoré : Regression Logistique'
+output:
+  html_document: default
+  pdf_document: default
+date: "09/03/2021"
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE,warning=FALSE}
+rm(list=ls())
+library(readxl)
+library(rlang)
+library(readxl)
+library(xlsx)
+library(lme4)
+#Chargement de un pour les
+df<-data.frame(IDELEVE=NULL,IDCLASSE=NULL,FILLE=NULL,ABS=NULL,ZONEDUC=NULL,AGE=NULL,Temps=NULL,Epreuve=NULL,Question=NULL,Score=NULL,Total=NULL)
+for(i in 1:15){
+  classe<-read_excel("ScoreEleve_T1sept_T2novdec_T3mars-V3-28-01-2021.xlsx",sheet=3+i)
+  classe<-classe[,(colnames(classe) %in% c("IDELEVE","IDCLASSE", "ZONEDUC", "AGE", "FILLE","ABS","Temps","Epreuve","Question","Score","Total") ) ]
+  df<-rbind(df,classe)
+}
+# on enleve les lignes correspondantes aux lignes Epreuve == CSP
+df2<-df[df$Epreuve!="CSP",]
+df2$AGE = as.numeric(df2$AGE)
+df2$Score = as.numeric(df2$Score)
+df2$IDELEVE=as.numeric(df2$IDELEVE)
+df2$NumEpreuve<-df2$Temps
+
+indice=which(is.na(df2$Score))# cases vides dans df 
+dfOrigine<-df2[-indice,]
+
+#dfNew<-dfNew[-indice1,] # le vecteur indice1 n'est pas le bon, il est associe à df au lieu de dfNew
+#dfNew<- dfNew[-which(dfNew$Score=='NA' |dfNew$Score=='Na' |dfNew$Score=='na' ),] # plus besoin, le vecteur score a ete transforme avant en numeric
+# dfNew$Score<-as.numeric(dfNew$Score)# plus besoin, le vecteur score a ete transforme avant en numeric
+# dfNew$AGE<-as.numeric(dfNew$AGE)
+#score par épreuve chaque eleve par temps
+scTempsEpreuve<-aggregate(Score~IDELEVE+IDCLASSE+Temps+Epreuve,data=dfOrigine,FUN = sum)
+scT1T2Epreuve<-scTempsEpreuve[scTempsEpreuve$Temps==1 |scTempsEpreuve$Temps==2, ]
+
+```
+
+
+
+```{r}
+
+#rajout des cluster et leur moyenne dans dfNew
+
+library(tidyverse)
+source("calcul_base.R")
+dfNew<- dfOrigine %>% mutate(IDCLASSE = sprintf("Classe %02d", IDCLASSE))
+
+
+classJour <- chargeDechiffr()
+classSem <- aggragateSemaine(classJour)
+classSem$ClasseNombre <- classSem$Classe
+classSem$SemScale<-classSem$semaine-2
+classSem$SemScale[classSem$ClasseNombre==4]<-classSem$semaine[classSem$ClasseNombre==4]-4
+withClusters4c6 <- clusterKMeans(classSem) 
+withClusters4c6$SemScale<-withClusters4c6$semaine-2
+withClusters4c6$SemScale[withClusters4c6$Classe=="Classe 04"]<-withClusters4c6$semaine[withClusters4c6$Classe=="Classe 04"]-4
+
+attribClust<- withClusters4c6 %>% select(Classe, cluster) %>%  distinct() 
+moyCluster<-withClusters4c6 %>% group_by(cluster) %>% summarize(moyenne=mean(déchifrabilité))
+
+dfWithCluster<- left_join(dfNew, attribClust, by=c("IDCLASSE"="Classe"))
+dfWithCluster<- left_join(dfWithCluster,moyCluster, by=c("cluster"))
+```
+
+```{r}
+
+#regression lineaire cluster 1 ou A
+regClust1<-withClusters4c6 %>% filter(cluster=="01, 09, 12, 17")
+reg1<-lm(déchifrabilité~SemScale, regClust1)
+plot(regClust1$SemScale, regClust1$déchifrabilité, ylim=c(0,100), xlab = "Semaine", ylab="Dechiffrabilité %", main = "Régression Linéaire Cluster A")
+abline(a=reg1$coefficients[[1]], b=reg1$coefficients[[2]], col=2)
+#summary(reg1)
+
+#regression lineaire cluster 2 ou B
+regClust2<-withClusters4c6 %>% filter(cluster=="02, 05, 06, 13, 15")
+reg2<-lm(déchifrabilité~SemScale, regClust2)
+plot(regClust2$SemScale, regClust2$déchifrabilité, ylim=c(0,100), xlab = "Semaine", ylab="Dechiffrabilité %", main = "Régression Linéaire Cluster B")
+abline(a=reg2$coefficients[[1]], b=reg2$coefficients[[2]], col=2)
+#summary(reg2)
+
+#regression lineaire cluster 3 ou C
+regClust3<-withClusters4c6 %>% filter(cluster=="04", SemScale >=0)
+reg3<-lm(déchifrabilité~SemScale, regClust3)
+plot(regClust3$SemScale, regClust3$déchifrabilité, ylim=c(0,100), xlab = "Semaine", ylab="Dechiffrabilité %", main = "Régression Linéaire Cluster C")
+abline(a=reg3$coefficients[[1]], b=reg3$coefficients[[2]], col=2)
+#summary(reg3)
+
+#regression lineaire cluster 4 ou D
+regClust4<-withClusters4c6 %>% filter(cluster=="07, 08, 10, 14, 16")
+reg4<-lm(déchifrabilité~SemScale, regClust4)
+plot(regClust4$SemScale, regClust4$déchifrabilité, ylim=c(0,100), xlab = "Semaine", ylab="Dechiffrabilité %", main = "Régression Linéaire Cluster D")
+abline(a=reg4$coefficients[[1]], b=reg4$coefficients[[2]], col=2)
+#summary(reg4)
+
+#creation de matrice des coeffs de la regression
+coefs1 <- as_tibble(t(as.matrix(reg1$coefficients))) %>% add_column(cluster="01, 09, 12, 17")
+coefs2 <- as_tibble(t(as.matrix(reg2$coefficients))) %>% add_column(cluster="02, 05, 06, 13, 15")
+coefs3 <- as_tibble(t(as.matrix(reg3$coefficients))) %>% add_column(cluster="04")
+coefs4 <- as_tibble(t(as.matrix(reg4$coefficients))) %>% add_column(cluster="07, 08, 10, 14, 16")
+
+coefs <- bind_rows(coefs1,coefs2,coefs3,coefs4)
+colnames(coefs) <- c("interceptCluster", "penteCluster", "cluster")
+
+#jointure des coeffs de regression avec dfNew
+dfWithCluster <- left_join(dfWithCluster, coefs, by=c("cluster"))
+
+
+#Calcule des coeffs de regression lineaire de la déchifrabilité par classe
+coeffbyclasse<-tibble(
+  IDCLASSE=character(), 
+  interceptClasse=numeric(), 
+  penteClasse=numeric(),
+  semaine=numeric()
+)
+
+for (i in c(1,2,4:10,12:17)) {
+  reg<-lm(déchifrabilité~SemScale, withClusters4c6 %>% filter(Classe==sprintf("Classe %02d", i), SemScale >=0) %>%  select(SemScale, déchifrabilité))
+  coeffbyclasse <- coeffbyclasse %>% add_row(IDCLASSE=sprintf("Classe %02d", i), interceptClasse=reg$coefficients[1], penteClasse=reg$coefficients[2])
+  
+}
+
+
+
+
+
+#jointure des coeffs de regression avec dfNew
+dfWithCluster <- left_join(dfWithCluster, coeffbyclasse, by=c("IDCLASSE"))
+
+
+
+
+```
+
+
+```{r}
+#renommage des clusters en categorie A,B,C,D
+dfWithCluster <- dfWithCluster %>% mutate(cluster = case_when(
+  cluster=="01, 09, 12, 17" ~ "A",
+  cluster=="02, 05, 06, 13, 15" ~ "B",
+  cluster=="04" ~ "C",
+  cluster=="07, 08, 10, 14, 16" ~ "D"
+  )
+) 
+#dfNew <- dfNew%>%rename(intercept=`(Intercept)`, pente=semaine)
+#dfNew$moyenne<-as.numeric(dfNew$moyenne)
+#dfNew$intercept<-as.numeric(dfNew$intercept)
+#dfNew$pente<-as.numeric(dfNew$pente)
+```
+
+
+```{r}
+dfNew <- dfWithCluster
+#jointure de dfNew et score individuel epreuve T1, création de 3 nouvelles colonnes
+decodage1<-left_join(dfNew,scT1T2Epreuve %>% filter(Epreuve=="Décodage" & Temps==1), by=c("IDELEVE"))
+decodage1<-decodage1 %>% rename(decodage_1=Score.y)                          ## choix du nouveau nom ??? _t1 ou pas, Score.y ou pas, c'est bizarre
+dfprov<-decodage1 %>% select(-c("IDCLASSE.y","Temps.y","Epreuve.y"))
+comprehension1 <- left_join(dfprov,scT1T2Epreuve %>% filter(Epreuve=="Comprehension" & Temps==1), by=c("IDELEVE"))
+comprehension1 <- comprehension1 %>% rename(comprehension_1=Score)            ## choix du nouveau nom ???
+dfprov2<- comprehension1 %>% select(-c("IDCLASSE","Temps","Epreuve"))
+phonologie1 <- left_join(dfprov2,scT1T2Epreuve %>% filter(Epreuve=="Phonologie" & Temps==1), by=c("IDELEVE"))
+phonologie1<- phonologie1 %>% rename(phonologie_1=Score)                     ## choix du nouveau nom ???
+dfprov3<- phonologie1 %>% select(-c("IDCLASSE","Temps","Epreuve"))
+
+#creation des tables par epreuves pour le temps 2 qui vont servir pour la regression logistique
+dfDecodT2<-dfprov3 %>% filter(Epreuve.x=="Décodage" & Temps.x==2)           
+dfCompT2<-dfprov3 %>% filter(Epreuve.x=="Comprehension" & Temps.x==2) 
+dfPhonoT2<-dfprov3 %>% filter(Epreuve.x=="Phonologie" & Temps.x==2)
+dfEncodT2<-dfprov3 %>% filter(Epreuve.x=="Encodage" & Temps.x==2)
+
+# Encodage :
+# Duplication des lignes
+dfEncodT2 <- dfEncodT2[rep(1:nrow(dfEncodT2), 1+(dfEncodT2$Question=="T2EQ5")),]
+dfEncodT2 <- dfEncodT2[rep(1:nrow(dfEncodT2), 1+(dfEncodT2$Question=="T2EQ6")),]
+dfEncodT2 <- dfEncodT2[rep(1:nrow(dfEncodT2), 1+(dfEncodT2$Question=="T2EQ7")),]
+dfEncodT2 <- dfEncodT2[rep(1:nrow(dfEncodT2), 1+(dfEncodT2$Question=="T2EQ8")),]
+
+dfEncodT2$RepNo <- sequence(rle(as.vector(dfEncodT2$Question))$lengths)
+
+# Renommage
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ5"]="T2EQ5_p"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ6"]="T2EQ6_p"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ7"]="T2EQ7_p"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ8"]="T2EQ8_p"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ5_p"&dfEncodT2$RepNo==2]="T2EQ5_o"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ6_p"&dfEncodT2$RepNo==2]="T2EQ6_o"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ7_p"&dfEncodT2$RepNo==2]="T2EQ7_o"
+dfEncodT2$Question[dfEncodT2$Question=="T2EQ8_p"&dfEncodT2$RepNo==2]="T2EQ8_o"
+
+# Modification des scores égaux à 1
+dfEncodT2$Score.x[dfEncodT2$Score.x==1&dfEncodT2$Total=="/2"&dfEncodT2$RepNo==2]=0
+
+# Modification des scores égaux à 2
+dfEncodT2$Score.x[dfEncodT2$Score.x==2]=1
+
+# Modification de la colonne total
+dfEncodT2$Total[dfEncodT2$Total=="/2"]="/1"
+
+#modification de l'erreur de saisie
+dfDecodT2$Score.x[dfDecodT2$Score.x==4]=1
+```
+
+```{r}
+#nombre d'eleve total 
+nbr=length(unique(dfprov3$IDELEVE)) # 260  
+
+naDeco1=length(unique(dfprov3$IDELEVE[which(is.na(dfprov3$decodage_1))])) #10 eleves NA en deco1
+naComp1=length(unique(dfprov3$IDELEVE[which(is.na(dfprov3$comprehension_1))])) #20 eleves NA en comp1
+naPhono1=length(unique(dfprov3$IDELEVE[which(is.na(dfprov3$phonologie_1))])) #22 eleves NA en phono1
+
+nbrdeco2=length(unique(dfDecodT2$IDELEVE))#246 eleves en deco2
+nbrenco2=length(unique(dfEncodT2$IDELEVE))#246 eleves en enco2
+nbrphono2=length(unique(dfPhonoT2$IDELEVE))#245 eleves en phono2 (-904)
+nbrcomp2=length(unique(dfCompT2$IDELEVE))#245 eleves en comp2 (-904)
+
+deco1_phono2=unique(dfPhonoT2$IDELEVE[which(is.na(dfPhonoT2$decodage_1))]) #7 NA
+comp1_phono2=unique(dfPhonoT2$IDELEVE[which(is.na(dfPhonoT2$comprehension_1))]) #16 NA
+phono1_phono2=unique(dfPhonoT2$IDELEVE[which(is.na(dfPhonoT2$phonologie_1))]) #18 NA
+
+
+#nombre d'élève total ayant NA dans les épreuves du temps1 
+idEleveNaTemps1=unique(c(deco1_phono2,comp1_phono2,phono1_phono2))
+naTemps1=length(idEleveNaTemps1) #23 NA total
+
+
+table1=data.frame(Decodage=c(nbr-naDeco1,nbrdeco2),Encodage=c(0,nbrenco2),Phonologie=c(nbr-naPhono1,nbrphono2),Comprehension=c(nbr-naComp1,nbrcomp2),row.names = c("NbrEleve_T1","NbrEleve_T2"))
+table1
+
+table2=data.frame(DecoT2=c(nbrdeco2,length(deco1_phono2),length(comp1_phono2),length(phono1_phono2),naTemps1),EncoT2=c(nbrenco2,length(deco1_phono2),length(comp1_phono2),length(phono1_phono2),naTemps1),PhonoT2=c(nbrphono2,length(deco1_phono2),length(comp1_phono2),length(phono1_phono2),naTemps1),CompT2=c(nbrcomp2,length(deco1_phono2),length(comp1_phono2),length(phono1_phono2),naTemps1),row.names = c("Nbr_total","NA_deco1","NA_comp1","NA_phono1","NA_total"))
+table2
+
+
+dfPhonoT2=dfPhonoT2[-which(dfPhonoT2$IDELEVE %in% idEleveNaTemps1),]
+dfEncodT2=dfEncodT2[-which(dfEncodT2$IDELEVE %in% c(idEleveNaTemps1,904) ),]
+dfCompT2=dfCompT2[-which(dfCompT2$IDELEVE %in% idEleveNaTemps1 ),]
+dfDecodT2=dfDecodT2[-which(dfDecodT2$IDELEVE %in% c(idEleveNaTemps1,904)),]
+```
+
+```{r}
+dfNA = scT1T2Epreuve[which(scT1T2Epreuve$IDELEVE %in% c(idEleveNaTemps1,904)),]
+dfNA=dfNA[-which(dfNA$Epreuve=="Motivation"),]
+
+dfNASEX=c()
+dfNAZone=rep(NA, length(c(idEleveNaTemps1,904)))
+for(i in 1:length(c(idEleveNaTemps1,904))){
+  dfNASEX[i]=unique(dfOrigine$FILLE[dfOrigine$IDELEVE==c(idEleveNaTemps1,904)[i]])
+  dfNAZone[i]=unique(dfOrigine$ZONEDUC[dfOrigine$IDELEVE==c(idEleveNaTemps1,904)[i]])
+}
+dfNA_SEXZONE=data.frame(IDELEVE=c(idEleveNaTemps1,904),FILLE=dfNASEX,ZONE=dfNAZone)
+table(dfNA_SEXZONE$FILLE,dfNA_SEXZONE$ZONE)
+#ggplot(dfNA_SEXZONE,aes(FILLE))+geom_bar(stat = 'count',fill = 'steelblue',width = 0.2)+scale_x_continuous(breaks =c(0,1))+ggtitle("Distribution selon le sexe")
+
+#ggplot(dfNA_SEXZONE,aes(x=IDELEVE,y=FILLE))+geom_point()+scale_y_continuous(breaks =c(0,1))
+
+#ggplot(dfNA_SEXZONE,aes(ZONE))+geom_bar(stat = 'count',fill = 'steelblue',width = 0.3)+ggtitle("Distribution selon le zone")
+
+#ggplot(dfNA_SEXZONE,aes(x=IDELEVE,y=ZONE))+geom_point()
+
+ggplot(dfNA[-which(dfNA$IDCLASSE==13),],mapping=aes(x=IDELEVE,y=Score,color=factor(Temps)))+geom_point()+ ggtitle("Les scores des épreuves des élèves ayant NA du T1(sauf classe13).")+labs(color="Temps")+facet_wrap(~Epreuve,ncol=2) + theme(axis.text.x = element_text(size = 8,vjust = 0.4, hjust = 0.5, angle = 90))
+
+ggplot(dfNA,mapping=aes(x=IDELEVE,y=Score,color=factor(Temps)))+geom_point()+ ggtitle("Les scores des épreuves des élèves ayant NA du T1.")+labs(color="Temps")+facet_wrap(~Epreuve,ncol=2) + theme(axis.text.x = element_text(size = 8,vjust = 0.4, hjust = 0.5, angle = 90))
+```
+
+
+```{r}
+#creation des colonnes avec resulta réduit des score T1
+dfDecodT2_2 <- cbind(dfDecodT2, dfDecodT2$decodage_1/15, dfDecodT2$comprehension_1/7, dfDecodT2$phonologie_1/8)
+dfDecodT2_2 <- dfDecodT2_2[,-c(18,19,20)]                   #### il faudrait renommer les dernieres variables...
+
+dfCompT2_2 <- cbind(dfCompT2, dfCompT2$decodage_1/15, dfCompT2$comprehension_1/7, dfCompT2$phonologie_1/8)
+dfCompT2_2 <- dfCompT2_2[,-c(18,19,20)]
+
+dfPhonoT2_2 <- cbind(dfPhonoT2, dfPhonoT2$decodage_1/15, dfPhonoT2$comprehension_1/7, dfPhonoT2$phonologie_1/8)
+dfPhonoT2_2 <- dfPhonoT2_2[,-c(18,19,20)]
+
+dfEncodT2_2 <-cbind(dfEncodT2, dfEncodT2$decodage_1/15, dfEncodT2$comprehension_1/7, dfEncodT2$phonologie_1/8)
+dfEncodT2_2 <- dfEncodT2_2[,-c(18,19,20)]
+
+```
+
+# Regressions avec scores non reduits pour T1
+
+#### Phonologie
+```{r}
+ger1_phono <- glmer(Score.x~cluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfPhonoT2)
+summary(ger1_phono)
+
+ger2_phono <- glmer(Score.x~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfPhonoT2)
+summary(ger2_phono)
+
+ger3_phono <- glmer(Score.x~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfPhonoT2)
+summary(ger3_phono)
+```
+
+
+#### Comprehension
+
+```{r}
+ger1_comp <- glmer(Score.x~cluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfCompT2)
+summary(ger1_comp)
+
+ger2_comp <- glmer(Score.x~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfCompT2)
+summary(ger2_comp)
+
+ger3_comp <- glmer(Score.x~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfCompT2)
+summary(ger3_comp)
+
+```
+
+#### Decodage
+
+```{r}
+ger1_decod <- glmer(Score.x~cluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfDecodT2)
+summary(ger1_decod)
+
+ger2_decod <- glmer(Score.x~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfDecodT2)
+summary(ger2_decod)
+
+ger3_decod <- glmer(Score.x~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfDecodT2)
+summary(ger3_decod)
+```
+
+#### Encodage
+
+```{r}
+ger1_encod <- glmer(Score.x~cluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfEncodT2)
+summary(ger1_encod)
+
+ger2_encod <- glmer(Score.x~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfEncodT2)
+summary(ger2_encod)
+
+ger3_encod <- glmer(Score.x~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1+(1|IDCLASSE.x) + (1|Question), family = binomial(link="logit"), dfEncodT2)
+summary(ger3_encod)
+```
+
+```{r, include=FALSE,}
+tableBIC=data.frame(Model=c("Score_phono~cluster+decodage_1+comprehension_1+phonologie_1","Score_phono~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1","Score_phono~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1","Score_comp~cluster+decodage_1+comprehension_1+phonologie_1","Score_comp~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1","Score_comp~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1","Score_deco~cluster+decodage_1+comprehension_1+phonologie_1","Score_deco~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1","Score_deco~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1","Score_enco~cluster+decodage_1+comprehension_1+phonologie_1","Score_enco~interceptCluster+penteCluster+decodage_1+comprehension_1+phonologie_1","Score_enco~interceptClasse+penteClasse+decodage_1+comprehension_1+phonologie_1"),BIC=c(1551.8,1548.6,1548.7,1581.5,1576.5,1576.5,3793.1,3785.2,3785.1,2552.3,2544.9,2545.0))
+```
+```{r}
+knitr::kable(tableBIC)
+```
